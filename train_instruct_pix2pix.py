@@ -916,7 +916,7 @@ def main():
                     args.pretrained_model_name_or_path,
                     unet=unet,
                     revision=args.revision,
-                    torch_dtype=weight_dtype,
+                    torch_dtype=weight_dtype, safety_checker=None
                 )
                 pipeline = pipeline.to(accelerator.device)
                 pipeline.set_progress_bar_config(disable=True)
@@ -964,7 +964,7 @@ def main():
             text_encoder=accelerator.unwrap_model(text_encoder),
             vae=accelerator.unwrap_model(vae),
             unet=unet,
-            revision=args.revision,
+            revision=args.revision, safety_checker=None
         )
         pipeline.save_pretrained(args.output_dir)
 
