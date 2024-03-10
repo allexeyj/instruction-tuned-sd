@@ -60,7 +60,7 @@ def parse_args():
 
 def load_pipeline(model_id: str):
     pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
-        model_id, torch_dtype=torch.float16, use_auth_token=True
+        model_id, torch_dtype=torch.float16, use_auth_token=True, safety_checker=None
     ).to("cuda")
     pipeline.enable_xformers_memory_efficient_attention()
     pipeline.set_progress_bar_config(disable=True)
