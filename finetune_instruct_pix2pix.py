@@ -1095,7 +1095,8 @@ def main():
                 for tracker in accelerator.trackers:
                     if tracker.name == "wandb":
                         wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
-                        for edited_image in edited_images:
+                        for img_idx, edited_image in enumerate(edited_images):
+                            edited_image.save(f'val_data/val_img_{step}_{img_idx}.png')
                             wandb_table.add_data(
                                 wandb.Image(original_image),
                                 wandb.Image(edited_image),
