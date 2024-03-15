@@ -455,7 +455,7 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
-        project_config=accelerator_project_config,device=torch.device('cuda:0')
+        project_config=accelerator_project_config,use_distributed=False
     )
 
     generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
