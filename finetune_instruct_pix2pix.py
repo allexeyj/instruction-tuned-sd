@@ -1,20 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
-# Copyright 2023 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
-"""Script to fine-tune InstructPix2Pix."""
 
 import argparse
 import logging
@@ -128,10 +114,19 @@ def parse_args():
         help="The column of the dataset containing the edit instruction.",
     )
     parser.add_argument(
-        "--val_image_url",
+        "--val_image_urls",
         type=str,
         default=None,
-        help="URL to the original image that you would like to edit (used during inference for debugging purposes).",
+        nargs="+",
+        help="URLs to the original images that you would like to edit (used during inference for debugging purposes).",
+    )
+
+    parser.add_argument(
+        "--checkpoint_steps_save_list",
+        type=int,
+        default=None,
+        nargs="+",
+        help="List of steps to save checkpoints",
     )
     parser.add_argument(
         "--validation_prompt",
@@ -140,7 +135,7 @@ def parse_args():
         help="A prompt that is sampled during training for inference.",
     )
     parser.add_argument(
-        "--num_validation_images",
+        "--num_validation_images_per_url",
         type=int,
         default=4,
         help="Number of images that should be generated during validation with `validation_prompt`.",
@@ -181,7 +176,7 @@ def parse_args():
     parser.add_argument(
         "--resolution",
         type=int,
-        default=256,
+        default=512,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
@@ -377,6 +372,7 @@ def parse_args():
             " training using `--resume_from_checkpoint`."
         ),
     )
+
     parser.add_argument(
         "--checkpoints_total_limit",
         type=int,
@@ -403,9 +399,6 @@ def parse_args():
     )
 
     args = parser.parse_args()
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
 
     # Sanity checks
     if args.dataset_name is None and args.train_data_dir is None:
@@ -1032,13 +1025,14 @@ def main():
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
 
-                if global_step % args.checkpointing_steps == 0:
+                if global_step in args.checkpoint_steps_save_list:
                     if accelerator.is_main_process:
                         save_path = os.path.join(
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
+                        os.remove(os.path.join(save_path, 'optimizer.bin'))
 
             logs = {
                 "step_loss": loss.detach().item(),
@@ -1051,12 +1045,12 @@ def main():
 
         if accelerator.is_main_process:
             if (
-                (args.val_image_url is not None)
+                (args.val_image_urls is not None)
                 and (args.validation_prompt is not None)
                 and (epoch % args.validation_epochs == 0)
             ):
                 logger.info(
-                    f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
+                    f"Running validation... \n Generating {args.num_validation_images_per_url * len(args.val_image_urls)} images with prompt:"
                     f" {args.validation_prompt}."
                 )
                 # create pipeline
@@ -1073,36 +1067,41 @@ def main():
                 pipeline = pipeline.to(accelerator.device)
                 pipeline.set_progress_bar_config(disable=True)
 
+                assert len(accelerator.trackers) <= 1
+
+                tracker = accelerator.trackers[0]
+
+
+                if tracker.name == "wandb":
+                    wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
+
                 # run inference
-                original_image = download_image(args.val_image_url)
                 edited_images = []
                 with torch.autocast(
                     str(accelerator.device),
                     enabled=accelerator.mixed_precision == "fp16",
                 ):
-                    for _ in range(args.num_validation_images):
-                        edited_images.append(
-                            pipeline(
-                                args.validation_prompt,
-                                image=original_image,
-                                num_inference_steps=20,
-                                image_guidance_scale=1.5,
-                                guidance_scale=7,
-                                generator=generator,
-                            ).images[0]
-                        )
-
-                for tracker in accelerator.trackers:
-                    if tracker.name == "wandb":
-                        wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
-                        for img_idx, edited_image in enumerate(edited_images):
-                            edited_image.save(f'val_data/val_img_{step}_{img_idx}.png')
+                    for idx_1, img_url in enumerate(args.val_image_urls):
+                        original_image = download_image(img_url)
+                        for idx in range(args.num_validation_images_per_url):
+                            edited_image = pipeline(
+                                    args.validation_prompt,
+                                    image=original_image,
+                                    num_inference_steps=20,
+                                    image_guidance_scale=1.5,
+                                    guidance_scale=7,
+                                    generator=generator).images[0]
+                            if not os.path.exists('val_data'):
+                                os.makedirs('val_data')
+                            edited_image.save(f'val_data/val_img_{idx_1}_{global_step}_{idx}.png')
                             wandb_table.add_data(
                                 wandb.Image(original_image),
                                 wandb.Image(edited_image),
                                 args.validation_prompt,
                             )
-                        tracker.log({"validation": wandb_table})
+                if tracker.name == "wandb":
+                    tracker.log({"validation": wandb_table})
+
                 if args.use_ema:
                     # Switch back to the original UNet parameters.
                     ema_unet.restore(unet.parameters())
@@ -1136,3 +1135,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
