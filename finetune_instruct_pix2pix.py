@@ -1083,6 +1083,7 @@ def main():
                 ):
                     for idx_1, img_url in enumerate(args.val_image_urls):
                         original_image = download_image(img_url)
+                        original_image = original_image.resize((512, 512))
                         for idx in range(args.num_validation_images_per_url):
                             edited_image = pipeline(
                                     args.validation_prompt,
